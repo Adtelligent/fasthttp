@@ -7,7 +7,7 @@ import (
 	"net"
 	"strings"
 
-	"github.com/valyala/fasthttp"
+	"github.com/Adtelligent/fasthttp"
 )
 
 // FasthttpHTTPDialer returns a fasthttp.DialFunc that dials using
