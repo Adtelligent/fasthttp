@@ -430,6 +430,11 @@ func (c *Client) DoRedirects(req *Request, resp *Response, maxRedirectsCount int
 	return err
 }
 
+func (c *Client) DoRedirectsDeadline(req *Request, resp *Response, maxRedirectsCount int, deadline time.Time) error {
+	_, _, err := doRequestFollowRedirectsDeadline(req, resp, req.URI().String(), maxRedirectsCount, deadline, c)
+	return err
+}
+
 // Do performs the given http request and fills the given http response.
 //
 // Request must contain at least non-zero RequestURI with full url (including
@@ -937,10 +942,65 @@ func doRequestFollowRedirectsBuffer(req *Request, dst []byte, url string, c clie
 	return statusCode, body, err
 }
 
+func doRequestFollowRedirectsDeadline(req *Request, resp *Response, url string, maxRedirectsCount int, deadline time.Time, c clientDoer) (int, body []byte, err error) {
+	timeout := -time.Since(deadline)
+	if timeout <= 0 {
+		err = ErrTimeout
+		return
+	}
+
+	var ch chan error
+	chv := errorChPool.Get()
+	if chv == nil {
+		chv = make(chan error, 1)
+	}
+	ch = chv.(chan error)
+
+	// Make req and resp copies, since on timeout they no longer
+	// may be accessed.
+	reqCopy := AcquireRequest()
+	req.copyToSkipBody(reqCopy)
+	swapRequestBody(req, reqCopy)
+	respCopy := AcquireResponse()
+
+	// Note that the request continues execution on ErrTimeout until
+	// client-specific ReadTimeout exceeds. This helps limiting load
+	// on slow hosts by MaxConns* concurrent requests.
+	//
+	// Without this 'hack' the load on slow host could exceed MaxConns*
+	// concurrent requests, since timed out requests on client side
+	// usually continue execution on the host.
+
+	go func() {
+		_, _, err := doRequestFollowRedirects(req, resp, url, maxRedirectsCount, c)
+		ch <- err
+	}()
+
+	tc := AcquireTimer(timeout)
+
+	select {
+	case err = <-ch:
+		if resp != nil {
+			respCopy.copyToSkipBody(resp)
+			swapResponseBody(resp, respCopy)
+		}
+		swapRequestBody(reqCopy, req)
+		ReleaseResponse(respCopy)
+		ReleaseRequest(reqCopy)
+		errorChPool.Put(chv)
+	case <-tc.C:
+		err = ErrTimeout
+	}
+	ReleaseTimer(tc)
+
+	return
+}
+
 func doRequestFollowRedirects(req *Request, resp *Response, url string, maxRedirectsCount int, c clientDoer) (statusCode int, body []byte, err error) {
 	redirectsCount := 0
 
 	for {
+
 		req.SetRequestURI(url)
 		if err := req.parseURI(); err != nil {
 			return 0, nil, err
