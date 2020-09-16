@@ -321,9 +321,17 @@ func (d *TCPDialer) tryDial(network string, addr *net.TCPAddr, deadline time.Tim
 			}
 			ReleaseTimer(tc)
 			if isTimeout {
-				return nil, ErrDialTimeout
+				return nil, ErrDialTimeoutOverflow
 			}
 		}
+	}
+
+	timeout = -time.Since(deadline)
+	if timeout <= 0 {
+		if concurrencyCh != nil {
+			<-concurrencyCh
+		}
+		return nil, ErrDialTimeoutOverflow
 	}
 
 	chv := dialResultChanPool.Get()
@@ -368,6 +376,7 @@ type dialResult struct {
 
 // ErrDialTimeout is returned when TCP dialing is timed out.
 var ErrDialTimeout = errors.New("dialing to the given TCP address timed out")
+var ErrDialTimeoutOverflow = errors.New("dialing to the given TCP address timed out because of dial concurrencyOverflow")
 
 // DefaultDialTimeout is timeout used by Dial and DialDualStack
 // for establishing TCP connections.
