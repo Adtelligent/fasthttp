@@ -972,7 +972,7 @@ func doRequestFollowRedirectsDeadline(req *Request, resp *Response, url string, 
 	// usually continue execution on the host.
 
 	go func() {
-		_, _, err := doRequestFollowRedirects(req, resp, url, maxRedirectsCount, c)
+		_, _, err := doRequestFollowRedirects(reqCopy, respCopy, url, maxRedirectsCount, c)
 		ch <- err
 	}()
 
